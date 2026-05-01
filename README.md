@@ -181,10 +181,23 @@ docker compose pull
 docker compose up -d
 ```
 
+Atau pakai script helper:
+
+```bash
+chmod +x deploy.sh check.sh
+./deploy.sh
+```
+
 Cek log:
 
 ```bash
 docker compose logs -f
+```
+
+Cek status cepat:
+
+```bash
+./check.sh
 ```
 
 ### 4) Auto restart
