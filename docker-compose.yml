@@ -1,0 +1,9 @@
+services:
+  mili-bot:
+    image: ghcr.io/galangsw27/discord-ai-bot:latest
+    container_name: mili-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

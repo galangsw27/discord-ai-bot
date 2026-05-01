@@ -1,0 +1,24 @@
+{
+  "name": "discord-ai-bot",
+  "version": "1.0.0",
+  "description": "Discord Bot with AI Integration using 9Router API",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy-commands": "node src/deploy-commands.js"
+  },
+  "keywords": ["discord", "bot", "ai", "9router"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "openai": "^4.57.0",
+    "dotenv": "^16.4.5",
+    "lowdb": "^7.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
