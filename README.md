@@ -100,14 +100,23 @@ git push -u origin main
 
 ### Opsi B - Render
 
+Pakai **Background Worker**, bukan Web Service.
+
 1. Push project ke GitHub
-2. Buka Render > New > Web Service
+2. Buka Render > New > **Background Worker**
 3. Connect repo GitHub
-4. Set:
-   - Build Command: `npm install`
+4. Render bisa baca `render.yaml` otomatis, atau set manual:
+   - Build Command: `npm ci`
    - Start Command: `npm start`
-5. Tambahkan environment variables yang sama
+5. Tambahkan environment variables:
+   - `DISCORD_TOKEN`
+   - `DISCORD_CLIENT_ID`
+   - `API_BASE_URL`
+   - `API_KEY`
+   - `AI_MODEL`
 6. Deploy
+7. Cek logs sampai muncul:
+   - `✅ Bot ready! Logged in as ...`
 
 ## GitHub Actions
 

@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: mili-discord-bot
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm ci
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: API_BASE_URL
+        value: https://rwvg2am.9router.com/v1
+      - key: API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: ComboCodexMili
