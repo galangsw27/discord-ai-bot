@@ -1,4 +1,5 @@
 import { AttachmentBuilder } from 'discord.js';
+import { config } from '../config.js';
 import { generateImage } from '../utils/ai.js';
 
 const COOLDOWN_MS = 5 * 60 * 1000;
@@ -32,6 +33,13 @@ export async function execute(interaction) {
   const userId = interaction.user.id;
   const guildId = interaction.guildId;
   const channelId = interaction.channelId;
+
+  if (!config.imageCommandEnabled) {
+    return interaction.reply({
+      content: 'DUH ... fitur /image lagi dimatiin dulu 😠',
+      ephemeral: false
+    });
+  }
 
   if (!ALLOWED_CHANNEL_IDS.has(channelId)) {
     return interaction.reply({

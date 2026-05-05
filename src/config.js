@@ -23,5 +23,6 @@ export const config = {
   imageBackground: process.env.IMAGE_BACKGROUND || 'auto',
   imageDetail: process.env.IMAGE_DETAIL || 'high',
   imageOutputFormat: process.env.IMAGE_OUTPUT_FORMAT || 'png',
-  imageN: Number(process.env.IMAGE_N || '1')
+  imageN: Number(process.env.IMAGE_N || '1'),
+  imageCommandEnabled: process.env.IMAGE_COMMAND_ENABLED === 'true'
 };
