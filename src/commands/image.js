@@ -4,6 +4,10 @@ import { generateImage } from '../utils/ai.js';
 const COOLDOWN_MS = 5 * 60 * 1000;
 const imageCooldowns = new Map();
 const PROMPT_PREVIEW_LIMIT = 80;
+const ALLOWED_CHANNEL_IDS = new Set([
+  '1500092065730531392',
+  '1460230180114141271'
+]);
 
 export const data = {
   name: 'image',
@@ -14,6 +18,12 @@ export const data = {
       description: 'Deskripsi gambar yang mau Mili buat',
       type: 3,
       required: true
+    },
+    {
+      name: 'image',
+      description: 'Gambar referensi buat Mili pakai',
+      type: 11,
+      required: false
     }
   ]
 };
@@ -22,7 +32,17 @@ export async function execute(interaction) {
   const userId = interaction.user.id;
   const guildId = interaction.guildId;
   const channelId = interaction.channelId;
+
+  if (!ALLOWED_CHANNEL_IDS.has(channelId)) {
+    return interaction.reply({
+      content: `Maaf pasupan <@${userId}> ❤️ aku cuma aktif di <#1500092065730531392> atau <#1460230180114141271> ya.`,
+      ephemeral: false
+    });
+  }
+
   const prompt = interaction.options.getString('prompt', true);
+  const referenceImage = interaction.options.getAttachment('image');
+  const referenceImageUrl = referenceImage?.url || '';
   const startedAt = Date.now();
   const now = startedAt;
   const lastRequestAt = imageCooldowns.get(userId) || 0;
@@ -33,7 +53,9 @@ export async function execute(interaction) {
     guildId,
     channelId,
     promptLength: prompt.length,
-    promptPreview: prompt.slice(0, PROMPT_PREVIEW_LIMIT)
+    promptPreview: prompt.slice(0, PROMPT_PREVIEW_LIMIT),
+    hasReferenceImage: Boolean(referenceImageUrl),
+    referenceImageUrlPreview: referenceImageUrl ? referenceImageUrl.slice(0, 120) : ''
   });
 
   if (remainingMs > 0) {
@@ -55,7 +77,7 @@ export async function execute(interaction) {
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const image = await generateImage(prompt);
+    const image = await generateImage(prompt, referenceImageUrl);
     const attachment = new AttachmentBuilder(image.buffer, { name: `mili-image.${getExtension(image.mimeType)}` });
     const durationMs = Date.now() - startedAt;
 
@@ -63,6 +85,7 @@ export async function execute(interaction) {
       userId,
       guildId,
       channelId,
+      hasReferenceImage: Boolean(referenceImageUrl),
       mimeType: image.mimeType,
       bytes: image.buffer.length,
       durationMs
@@ -79,6 +102,7 @@ export async function execute(interaction) {
       userId,
       guildId,
       channelId,
+      hasReferenceImage: Boolean(referenceImageUrl),
       durationMs,
       error: error instanceof Error ? error.message : String(error)
     });

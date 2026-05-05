@@ -17,5 +17,11 @@ export const config = {
   apiKey: process.env.API_KEY || '',
   aiModel: process.env.AI_MODEL || 'ComboCodexMili',
   imageModel: process.env.IMAGE_MODEL || 'gemini/gemini-3-pro-image-preview',
-  imageSize: process.env.IMAGE_SIZE || '1024x1024'
+  imageSize: process.env.IMAGE_SIZE || '1024x1024',
+  ninerouterConnectionId: process.env.NINEROUTER_CONNECTION_ID || '',
+  imageQuality: process.env.IMAGE_QUALITY || 'auto',
+  imageBackground: process.env.IMAGE_BACKGROUND || 'auto',
+  imageDetail: process.env.IMAGE_DETAIL || 'high',
+  imageOutputFormat: process.env.IMAGE_OUTPUT_FORMAT || 'png',
+  imageN: Number(process.env.IMAGE_N || '1')
 };

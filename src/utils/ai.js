@@ -179,18 +179,24 @@ export async function generateAiResponse(prompt, user, channel, recentMessages =
   throw lastError;
 }
 
-export async function generateImage(prompt) {
-  const response = await fetch(`${config.apiBaseUrl}/images/generations`, {
+export async function generateImage(prompt, referenceImageUrl = '') {
+  const response = await fetch(`${config.apiBaseUrl}/images/generations?response_format=binary`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...(config.ninerouterConnectionId ? { 'x-connection-id': config.ninerouterConnectionId } : {})
     },
     body: JSON.stringify({
       model: config.imageModel,
       prompt,
-      response_format: 'b64_json',
-      size: config.imageSize
+      n: config.imageN,
+      size: config.imageSize,
+      quality: config.imageQuality,
+      background: config.imageBackground,
+      image_detail: config.imageDetail,
+      output_format: config.imageOutputFormat,
+      ...(referenceImageUrl ? { image: referenceImageUrl } : {})
     })
   });
 
@@ -199,34 +205,9 @@ export async function generateImage(prompt) {
     throw new Error(`${response.status} ${errorBody}`);
   }
 
-  const data = await response.json();
-  const image = data.data?.[0];
-
-  if (!image) {
-    throw new Error('Image response missing data[0]');
-  }
-
-  if (image.b64_json) {
-    return {
-      buffer: Buffer.from(image.b64_json, 'base64'),
-      mimeType: 'image/png'
-    };
-  }
-
-  if (image.url) {
-    const imageResponse = await fetch(image.url);
-
-    if (!imageResponse.ok) {
-      const errorBody = await imageResponse.text();
-      throw new Error(`Image URL fetch failed: ${imageResponse.status} ${errorBody}`);
-    }
-
-    const arrayBuffer = await imageResponse.arrayBuffer();
-    return {
-      buffer: Buffer.from(arrayBuffer),
-      mimeType: imageResponse.headers.get('content-type') || 'image/png'
-    };
-  }
-
-  throw new Error('Image response missing b64_json or url');
+  const arrayBuffer = await response.arrayBuffer();
+  return {
+    buffer: Buffer.from(arrayBuffer),
+    mimeType: response.headers.get('content-type') || 'image/png'
+  };
 }

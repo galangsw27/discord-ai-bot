@@ -1,22 +1,60 @@
 import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { config } from './config.js';
 import { generateAiResponse } from './utils/ai.js';
 import { getGuildSettings } from './utils/storage.js';
+
+const ALLOWED_CHANNEL_IDS = new Set([
+  '1500092065730531392',
+  '1460230180114141271'
+]);
+const commands = await loadCommands();
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
   ]
 });
 
-const GREETING_REGEX = /^(halo\s*mili|hai\s*mili|hi\s*mili|hey\s*mili|mili)\b[!?.\s]*$/i;
-const GREETING_PREFIX_REGEX = /^(halo\s*mili|hai\s*mili|hi\s*mili|hey\s*mili|mili)\b[!?.\s]*/i;
-const MIN_MEANINGFUL_LEN = 4;
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`✅ Bot ready! Logged in as ${readyClient.user.tag}`);
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = commands.get(interaction.commandName);
+  if (!command?.execute) {
+    console.warn('[SLASH_UNKNOWN]', { commandName: interaction.commandName });
+    return;
+  }
+
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    console.error('[SLASH_ERROR]', {
+      commandName: interaction.commandName,
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      userId: interaction.user?.id,
+      error: error instanceof Error ? error.message : String(error)
+    });
+
+    const message = 'DUH ... aku udah ga mood nanti lah jawabnya 😠';
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(message).catch(() => {});
+      return;
+    }
+
+    await interaction.reply({ content: message, ephemeral: true }).catch(() => {});
+  }
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -32,48 +70,42 @@ client.on(Events.MessageCreate, async (message) => {
 
   const botId = client.user?.id;
   const isMentioned = botId ? message.mentions.users.has(botId) : false;
-  console.log('[MENTION_CHECK]', { botId, isMentioned, mentionIds: [...message.mentions.users.keys()] });
+  const isAllowedChannel = ALLOWED_CHANNEL_IDS.has(message.channel?.id);
+  console.log('[MENTION_CHECK]', {
+    botId,
+    isMentioned,
+    channelId: message.channel?.id,
+    isAllowedChannel,
+    allowedChannelIds: [...ALLOWED_CHANNEL_IDS],
+    mentionIds: [...message.mentions.users.keys()]
+  });
   if (!isMentioned) return;
+
+  if (!isAllowedChannel) {
+    try {
+      await message.reply(`Maaf pasupan <@${message.author.id}> ❤️ aku cuma aktif di <#1500092065730531392> atau <#1460230180114141271> ya.`);
+    } catch (error) {
+      console.error('Channel restriction reply error:', error);
+    }
+    return;
+  }
 
   const settings = await getGuildSettings(message.guild.id);
   if (settings.aiEnabled === false) return;
 
+  const originalContent = message.content.trim();
   const rawPrompt = message.content.replace(/<@!?\d+>/g, '').trim();
-  if (!rawPrompt) {
-    await message.reply(`Hi pasupan <@${message.author.id}> ❤️`);
-    return;
-  }
-
-  const normalized = normalizeText(rawPrompt);
-
-  // 1) Sapaan murni -> hardcoded exact reply
-  if (isPureGreeting(normalized)) {
-    await message.reply(`Hi pasupan <@${message.author.id}> ❤️`);
-    return;
-  }
-
-  // 2) Jika diawali sapaan + ada pertanyaan lanjut, buang sapaan dulu
-  const routedPrompt = stripGreetingPrefix(rawPrompt).trim() || rawPrompt;
-
-  // 3) Pertanyaan terlalu pendek/ambigu -> fallback
-  if (isTooAmbiguous(routedPrompt)) {
-    await message.reply('DUH ... aku udah ga mood nanti lah jawabnya 😠');
-    return;
-  }
-
-  // 4) Hard guard konteks MILICUTE -> jika di luar konteks, fallback
-  if (!isMilicuteContext(routedPrompt, recentContextHint(message.channel.name, rawPrompt))) {
-    await message.reply('DUH ... aku udah ga mood nanti lah jawabnya 😠');
-    return;
-  }
+  const routedPrompt = rawPrompt || 'sapa aku sebagai Mili dengan gaya khas MILICUTE.';
 
   await message.channel.sendTyping();
 
   const recentMessages = await getRecentMessages(message.channel, message.id, 8);
   const channel = { id: message.channel.id, name: message.channel.name };
+  const roleCountText = await getMentionedRoleCountsText(message);
+  const context = `${buildDiscordContext(message, originalContent)}\n[Role Counts]\n${roleCountText}`;
 
   try {
-    const response = await generateAiResponse(routedPrompt, message.author, channel, recentMessages);
+    const response = await generateAiResponse(routedPrompt, message.author, channel, recentMessages, context);
     await message.reply(response);
   } catch (error) {
     console.error('Mention AI Error:', error);
@@ -81,46 +113,78 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-function normalizeText(text) {
-  return text
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
+async function loadCommands() {
+  const commandMap = new Map();
+  const commandsPath = join(process.cwd(), 'src', 'commands');
+  const commandFiles = readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
+
+  for (const file of commandFiles) {
+    const filePath = join(commandsPath, file);
+    const command = await import(pathToFileURL(filePath).href);
+
+    if (command.data?.name && command.execute) {
+      commandMap.set(command.data.name, command);
+    }
+  }
+
+  return commandMap;
 }
 
-function isPureGreeting(text) {
-  return GREETING_REGEX.test(text);
+function buildDiscordContext(message, originalContent = '') {
+  const guildName = message.guild?.name || '';
+  const memberCount = message.guild?.memberCount || 0;
+  const authorDisplayName = message.member?.displayName || message.author?.username || '';
+  const botId = message.client.user?.id;
+
+  const mentionedUsers = [...message.mentions.users.values()];
+  const targetUsers = mentionedUsers.filter(u => u.id !== botId);
+
+  const mentionUsers = mentionedUsers
+    .map(u => `<@${u.id}> (${u.username}${u.globalName ? ` / ${u.globalName}` : ''})${u.id === botId ? ' [BOT_MILI]' : ''}`)
+    .join(', ');
+
+  const targetUserLines = targetUsers.map(u => {
+    const member = message.guild?.members.cache.get(u.id);
+    const displayName = member?.displayName || u.globalName || u.username;
+    return `- <@${u.id}> displayName="${displayName}" username="${u.username}"`;
+  });
+
+  const mentionRoles = [...message.mentions.roles.values()]
+    .map(r => `<@&${r.id}> (${r.name})`)
+    .join(', ');
+
+  const mentionChannels = [...message.mentions.channels.values()]
+    .map(c => `<#${c.id}> (${c.name})`)
+    .join(', ');
+
+  return [
+    `[Guild] Name: ${guildName}`,
+    `[Guild] Member Count: ${memberCount}`,
+    `[Author] Mention: <@${message.author.id}>`,
+    `[Author] Display Name: ${authorDisplayName}`,
+    `[Original Message With Mentions]: ${originalContent}`,
+    `[Mentions] Users: ${mentionUsers || '-'}`,
+    `[Target Users Mentioned By Author - respond about these users if user talks about them]:`,
+    targetUserLines.length ? targetUserLines.join('\n') : '-',
+    `[Mentions] Roles: ${mentionRoles || '-'}`,
+    `[Mentions] Channels: ${mentionChannels || '-'}`
+  ].join('\n');
 }
 
-function stripGreetingPrefix(text) {
-  return text.replace(GREETING_PREFIX_REGEX, '');
-}
+async function getMentionedRoleCountsText(message) {
+  try {
+    const roles = [...message.mentions.roles.values()];
+    if (!roles.length) return '-';
 
-function isTooAmbiguous(text) {
-  const t = normalizeText(text);
-  if (t.length < MIN_MEANINGFUL_LEN) return true;
+    await message.guild.members.fetch();
 
-  const ambiguousSet = new Set([
-    'apa', 'gimana', 'kenapa', 'kok', 'lah', 'hah', 'hmm', 'h?', '?', 'ok', 'oke', 'sip'
-  ]);
-
-  return ambiguousSet.has(t);
-}
-
-function recentContextHint(channelName = '', rawPrompt = '') {
-  return `${channelName} ${rawPrompt}`.toLowerCase();
-}
-
-function isMilicuteContext(text, hint = '') {
-  const t = `${normalizeText(text)} ${hint}`;
-  const milicuteKeywords = [
-    'mili', 'milicute', 'pasupan', 'komunitas', 'squad', 'cute tactical',
-    'dark-cute', 'dark cute', 'hitam merah', 'dark red', 'tactical',
-    'event', 'roleplay', 'fashion', 'street fashion', 'chibi', 'premium',
-    'galak tapi imut', 'cute but dangerous', 'pasukan kecil', 'imut boleh lemah jangan'
-  ];
-
-  return milicuteKeywords.some(keyword => t.includes(keyword));
+    return roles
+      .map(role => `- <@&${role.id}> (${role.name}): ${role.members.size} member`)
+      .join('\n');
+  } catch (error) {
+    console.warn('Role count fetch failed:', error.message);
+    return '-';
+  }
 }
 
 async function getRecentMessages(channel, beforeMessageId, limit = 8) {
@@ -132,7 +196,7 @@ async function getRecentMessages(channel, beforeMessageId, limit = 8) {
 
     return filtered
       .reverse()
-      .map(m => `<@${m.author.id}>: ${m.content}`)
+      .map(m => `<@${m.author.id}> (${m.member?.displayName || m.author.username}): ${m.content}`)
       .join('\n');
   } catch {
     return '';
