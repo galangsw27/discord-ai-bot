@@ -1,3 +1,34 @@
+# /image Command Logging Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add structured runtime logs to `/image` so usage, cooldowns, success/failure, and latency are visible in console output.
+
+**Architecture:** Keep logging local to `src/commands/image.js` with a tiny helper for consistent event tags and payloads. Preserve all existing Discord replies and image generation behavior; only add observability around current flow.
+
+**Tech Stack:** Node.js ESM, discord.js v14, built-in `console.log` and `console.error`.
+
+---
+
+## File Structure
+
+- Modify `src/commands/image.js`
+  - Add structured logging helper.
+  - Log request, cooldown, success, and error events.
+  - Track duration with `Date.now()`.
+
+---
+
+### Task 1: Add structured /image logs
+
+**Files:**
+- Modify: `src/commands/image.js`
+
+- [ ] **Step 1: Update `src/commands/image.js` to add logging helper and event logs**
+
+Apply these exact changes:
+
+```js
 import { AttachmentBuilder } from 'discord.js';
 import { generateImage } from '../utils/ai.js';
 
@@ -106,3 +137,37 @@ function getExtension(mimeType) {
 function logImageEvent(level, tag, payload) {
   console[level](tag, payload);
 }
+```
+
+- [ ] **Step 2: Run syntax check**
+
+Run:
+
+```powershell
+node --check src/commands/image.js
+```
+
+Expected:
+
+```text
+(no output, exit code 0)
+```
+
+- [ ] **Step 3: Commit**
+
+```powershell
+git add src/commands/image.js
+git commit -m @'
+feat: add image command logging
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+'@
+```
+
+---
+
+## Self-Review
+
+- Spec coverage: request, cooldown, success, error, duration, prompt preview, and single-file scope are all covered.
+- Placeholder scan: no TBD/TODO or vague steps remain.
+- Type consistency: `logImageEvent(level, tag, payload)` is defined and used consistently; payload fields match spec names.
