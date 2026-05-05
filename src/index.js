@@ -11,6 +11,16 @@ const ALLOWED_CHANNEL_IDS = new Set([
   '1460230180114141271'
 ]);
 const commands = await loadCommands();
+const EVENT_SOURCE_CHANNEL_ID = '1460235193062395966';
+const EVENT_SCHEDULE_MARKER = 'INFO JADWAL EVENT TERUPDATE';
+const EVENT_KEYWORDS = [
+  'event',
+  'jadwal event',
+  'event hari ini',
+  'acara hari ini',
+  'kapan event',
+  'info event'
+];
 
 const client = new Client({
   intents: [
@@ -83,7 +93,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!isAllowedChannel) {
     try {
-      await message.reply(`Maaf pasupan <@${message.author.id}> ❤️ aku cuma aktif di <#1500092065730531392> atau <#1460230180114141271> ya.`);
+      await message.reply(`Maaf pasupan <@${message.author.id}> ❤️ aku cuma aktif di <#1500092065730531392>  ya.`);
     } catch (error) {
       console.error('Channel restriction reply error:', error);
     }
@@ -102,7 +112,8 @@ client.on(Events.MessageCreate, async (message) => {
   const recentMessages = await getRecentMessages(message.channel, message.id, 8);
   const channel = { id: message.channel.id, name: message.channel.name };
   const roleCountText = await getMentionedRoleCountsText(message);
-  const context = `${buildDiscordContext(message, originalContent)}\n[Role Counts]\n${roleCountText}`;
+  const eventContext = await getEventScheduleContext(message.guild, routedPrompt, message.author.id);
+  const context = `${buildDiscordContext(message, originalContent)}\n[Role Counts]\n${roleCountText}${eventContext ? `\n${eventContext}` : ''}`;
 
   try {
     const response = await generateAiResponse(routedPrompt, message.author, channel, recentMessages, context);
@@ -201,6 +212,81 @@ async function getRecentMessages(channel, beforeMessageId, limit = 8) {
   } catch {
     return '';
   }
+}
+
+function shouldLookupEventSchedule(prompt) {
+  const normalizedPrompt = prompt.toLowerCase();
+  return EVENT_KEYWORDS.some(keyword => normalizedPrompt.includes(keyword));
+}
+
+async function getEventScheduleContext(guild, prompt, requestUserId) {
+  if (!shouldLookupEventSchedule(prompt)) {
+    return '';
+  }
+
+  try {
+    const sourceChannel = guild.channels.cache.get(EVENT_SOURCE_CHANNEL_ID);
+    if (!sourceChannel?.isTextBased()) {
+      console.warn('[EVENT_LOOKUP_ERROR]', {
+        requestUserId,
+        sourceChannelId: EVENT_SOURCE_CHANNEL_ID,
+        error: 'Source channel not found or not text-based'
+      });
+      return `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>\n[Latest Event Update]: LOOKUP_ERROR`;
+    }
+
+    const fetched = await sourceChannel.messages.fetch({ limit: 100 });
+    const matchedMessages = [...fetched.values()]
+      .filter(message => message.content.toLowerCase().includes(EVENT_SCHEDULE_MARKER.toLowerCase()))
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+    const latestMessage = matchedMessages[0];
+    if (!latestMessage) {
+      console.log('[EVENT_LOOKUP_MISS]', {
+        requestUserId,
+        sourceChannelId: EVENT_SOURCE_CHANNEL_ID
+      });
+      return `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>\n[Latest Event Update]: NOT_FOUND`;
+    }
+
+    console.log('[EVENT_LOOKUP_HIT]', {
+      requestUserId,
+      sourceChannelId: EVENT_SOURCE_CHANNEL_ID,
+      messageId: latestMessage.id,
+      createdTimestamp: latestMessage.createdTimestamp
+    });
+
+    return [
+      `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>`,
+      `[Latest Event Update Message Timestamp]: ${new Date(latestMessage.createdTimestamp).toISOString()}`,
+      `[Latest Event Update Content]: ${latestMessage.content}`,
+      `[Latest Parsed Event Date]: ${parseEventDate(latestMessage.content)}`
+    ].join('\n');
+  } catch (error) {
+    console.warn('[EVENT_LOOKUP_ERROR]', {
+      requestUserId,
+      sourceChannelId: EVENT_SOURCE_CHANNEL_ID,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>\n[Latest Event Update]: LOOKUP_ERROR`;
+  }
+}
+
+function parseEventDate(content) {
+  const patterns = [
+    /\b(\d{2}\/\d{2}\/\d{4})\b/,
+    /\b(\d{2}-\d{2}-\d{4})\b/,
+    /\b(\d{4}-\d{2}-\d{2})\b/
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return '-';
 }
 
 client.on('error', (error) => {

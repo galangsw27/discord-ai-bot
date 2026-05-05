@@ -43,7 +43,7 @@ export async function execute(interaction) {
 
   if (!ALLOWED_CHANNEL_IDS.has(channelId)) {
     return interaction.reply({
-      content: `Maaf pasupan <@${userId}> ❤️ aku cuma aktif di <#1500092065730531392> atau <#1460230180114141271> ya.`,
+      content: `Maaf pasupan <@${userId}> ❤️ aku cuma aktif di <#1500092065730531392>  ya.`,
       ephemeral: false
     });
   }
