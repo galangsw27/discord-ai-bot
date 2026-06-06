@@ -214,6 +214,13 @@ client.on(Events.MessageCreate, async (message) => {
       memberId: message.author.id,
       channelId: message.channel.id
     });
+    const triggerMessage = message;
+    triggerMessage.delete().catch((err) => {
+      console.warn('[SPAM_TRAP_MSG_DELETE_ERROR]', {
+        messageId: triggerMessage.id,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    });
     cleanKickAndPurge(message.member).catch((err) => {
       console.error('[SPAM_TRAP_ERROR]', {
         memberId: message.author?.id,
