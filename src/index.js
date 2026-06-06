@@ -442,6 +442,20 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
       createdTimestamp: latestMessage.createdTimestamp
     });
 
+    // Debug: log all parsed events
+    const allEvents = parseScheduleEvents(latestMessage.content);
+    console.log('[EVENT_PARSED]', {
+      requestUserId,
+      messageId: latestMessage.id,
+      eventCount: allEvents.length,
+      events: allEvents.map(e => ({
+        dateLabel: e.dateLabel,
+        venue: e.venue,
+        time: e.time,
+        date: e.date.toISOString()
+      }))
+    });
+
     const nearestEvent = findNearestEvent(latestMessage.content);
 
     return [
@@ -579,7 +593,7 @@ function parseIndonesianDateLabel(label) {
     desember: 11
   };
 
-  const match = normalized.match(/(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)?\s*,?\s*(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  const match = normalized.match(/(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)?\s*,?\s*(\d{1,2})\s*([a-z]+)\s+(\d{4})/);
   if (!match) return null;
 
   const day = Number(match[1]);
