@@ -27,6 +27,8 @@ const WELCOME_CHANNEL_ID = '1459954382257918199';
 const VERIFICATION_CHANNEL_ID = '1467894995355963562';
 const ROLE_CHANNEL_ID = '1460235649947926530';
 const ROLE_INFO_CHANNEL_ID = '1460235976952778907';
+const SPAM_TRAP_CHANNEL_ID = '1512635399426674778';
+const ONE_HOUR_MS = 60 * 60 * 1000;
 const VERIFICATION_CHANNEL_MENTION = `<#${VERIFICATION_CHANNEL_ID}>`;
 const ROLE_CHANNEL_MENTION = `<#${ROLE_CHANNEL_ID}>`;
 const ROLE_INFO_CHANNEL_MENTION = `<#${ROLE_INFO_CHANNEL_ID}>`;
@@ -122,6 +124,79 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+async function cleanKickAndPurge(member) {
+  try {
+    await member.kick('Automated: sent message in spam-trap channel');
+    console.log('[SPAM_KICK]', {
+      guildId: member.guild.id,
+      memberId: member.id,
+      tag: member.user.tag
+    });
+  } catch (kickErr) {
+    console.error('[SPAM_KICK_ERROR]', {
+      memberId: member.id,
+      error: kickErr instanceof Error ? kickErr.message : String(kickErr)
+    });
+    return;
+  }
+
+  const since = Date.now() - ONE_HOUR_MS;
+
+  for (const [, channel] of member.guild.channels.cache) {
+    if (!channel.isTextBased()) continue;
+    if (channel.id === SPAM_TRAP_CHANNEL_ID) continue;
+
+    try {
+      let deleted = 0;
+      let lastId;
+
+      while (true) {
+        const fetchOptions = { limit: 100 };
+        if (lastId) fetchOptions.before = lastId;
+
+        const fetched = await channel.messages.fetch(fetchOptions);
+        if (!fetched.size) break;
+
+        const matching = fetched.filter(
+          (m) => m.author.id === member.id && m.createdTimestamp >= since
+        );
+
+        if (matching.size >= 2) {
+          try {
+            const deletedMsgs = await channel.bulkDelete(matching, true);
+            deleted += deletedMsgs.size;
+          } catch (bulkErr) {
+            for (const msg of matching.values()) {
+              try { await msg.delete(); deleted += 1; } catch {}
+            }
+          }
+        } else if (matching.size === 1) {
+          const msg = matching.first();
+          try { await msg.delete(); deleted += 1; } catch {}
+        }
+
+        lastId = fetched.last()?.id;
+        if (!lastId) break;
+        if (fetched.last().createdTimestamp < since) break;
+      }
+
+      if (deleted > 0) {
+        console.log('[SPAM_PURGE]', {
+          memberId: member.id,
+          channelId: channel.id,
+          deleted
+        });
+      }
+    } catch (channelErr) {
+      console.warn('[SPAM_PURGE_CHANNEL_SKIP]', {
+        memberId: member.id,
+        channelId: channel.id,
+        error: channelErr instanceof Error ? channelErr.message : String(channelErr)
+      });
+    }
+  }
+}
+
 client.on(Events.MessageCreate, async (message) => {
   console.log('[MSG]', {
     guildId: message.guild?.id,
@@ -132,6 +207,21 @@ client.on(Events.MessageCreate, async (message) => {
   });
 
   if (message.author.bot || !message.guild) return;
+
+  if (message.channel?.id === SPAM_TRAP_CHANNEL_ID) {
+    console.log('[SPAM_TRAP_HIT]', {
+      guildId: message.guild.id,
+      memberId: message.author.id,
+      channelId: message.channel.id
+    });
+    cleanKickAndPurge(message.member).catch((err) => {
+      console.error('[SPAM_TRAP_ERROR]', {
+        memberId: message.author?.id,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    });
+    return;
+  }
 
   const prefixMatch = parseSearchPrefix(message.content);
   if (prefixMatch && !prefixMatch.empty) {
