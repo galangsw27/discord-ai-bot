@@ -150,7 +150,19 @@ async function fetchAi(messages) {
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || 'Hmm, aku lagi nggak bisa jawab sekarang nih 😅';
+  const raw = data.choices?.[0]?.message?.content || 'Hmm, aku lagi nggak bisa jawab sekarang nih 😅';
+
+  // strip thinking / reasoning blocks and internal monologue
+  let cleaned = raw;
+  const thinkEnd = cleaned.indexOf('</think>');
+  if (thinkEnd !== -1) cleaned = cleaned.slice(thinkEnd + 8).trim();
+
+  // remove "Wait," "Actually," "Hmm," etc. internal deliberation paragraphs
+  cleaned = cleaned
+    .replace(/^(Wait[,.]?|Actually[,.]?|Hmm[,.]?|Okay[,.]?|So[,.]?|Let me check[,.]?|Looking at this[,.]?)[ \t]*\n?/gim, '')
+    .trim();
+
+  return cleaned || raw;
 }
 
 export async function generateAiResponse(prompt, user, channel, recentMessages = '', discordContext = '') {

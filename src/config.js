@@ -13,7 +13,7 @@ for (const key of requiredVars) {
 export const config = {
   discordToken: process.env.DISCORD_TOKEN,
   discordClientId: process.env.DISCORD_CLIENT_ID,
-  apiBaseUrl: process.env.API_BASE_URL || 'https://rwvg2am.9router.com/v1',
+  apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:20128/v1',
   apiKey: process.env.API_KEY || '',
   aiModel: process.env.AI_MODEL || 'ComboCodexMili',
   imageModel: process.env.IMAGE_MODEL || 'gemini/gemini-3-pro-image-preview',
@@ -24,5 +24,8 @@ export const config = {
   imageDetail: process.env.IMAGE_DETAIL || 'high',
   imageOutputFormat: process.env.IMAGE_OUTPUT_FORMAT || 'png',
   imageN: Number(process.env.IMAGE_N || '1'),
-  imageCommandEnabled: process.env.IMAGE_COMMAND_ENABLED === 'true'
+  imageCommandEnabled: process.env.IMAGE_COMMAND_ENABLED === 'true',
+  ninerouterUrl: process.env.NINEROUTER_URL || process.env.API_BASE_URL || 'http://localhost:20128/v1',
+  ninerouterKey: process.env.NINEROUTER_KEY || process.env.API_KEY || '',
+  searchModel: process.env.NINEROUTER_SEARCH_MODEL || 'combo9'
 };

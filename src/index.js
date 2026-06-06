@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { config } from './config.js';
 import { generateAiResponse } from './utils/ai.js';
 import { getGuildSettings } from './utils/storage.js';
+import { searchWeb } from './utils/web-search.js';
+import { parseSearchPrefix, formatSearchResultLinks, buildSearchSummaryPrompt, buildSearchReply } from './utils/search-formatter.js';
 
 const ALLOWED_CHANNEL_IDS = new Set([
   '1500092065730531392',
@@ -21,6 +23,29 @@ const EVENT_KEYWORDS = [
   'kapan event',
   'info event'
 ];
+const WELCOME_CHANNEL_ID = '1459954382257918199';
+const VERIFICATION_CHANNEL_ID = '1467894995355963562';
+const ROLE_CHANNEL_ID = '1460235649947926530';
+const ROLE_INFO_CHANNEL_ID = '1460235976952778907';
+const VERIFICATION_CHANNEL_MENTION = `<#${VERIFICATION_CHANNEL_ID}>`;
+const ROLE_CHANNEL_MENTION = `<#${ROLE_CHANNEL_ID}>`;
+const ROLE_INFO_CHANNEL_MENTION = `<#${ROLE_INFO_CHANNEL_ID}>`;
+const WELCOME_TEMPLATES = [
+  'Welcome Pasupan <@USER_ID>! Jangan lupa verif di {verification}, ambil role di {role}, dan keterangan role ada di {roleInfo}.',
+  'Halo Pasupan <@USER_ID>! Verif dulu di {verification}, terus ambil role di {role} ya. Keterangan role ada di {roleInfo}.',
+  'Selamat datang <@USER_ID>! Jangan lupa verifikasi di {verification}, lalu pilih role di {role}. Keterangan role ada di {roleInfo}.',
+  'Welcome <@USER_ID>! Jangan lupa verif di {verification}, ambil role di {role}, dan cek keterangan role di {roleInfo} biar langsung siap gabung.',
+  'Hai <@USER_ID>! Singgah dulu ke {verification} buat verif, lalu ambil role di {role} ya. Keterangan role ada di {roleInfo}.'
+];
+
+function buildWelcomeMessage(memberId) {
+  const template = WELCOME_TEMPLATES[Math.floor(Math.random() * WELCOME_TEMPLATES.length)];
+  return template
+    .replace('<@USER_ID>', `<@${memberId}>`)
+    .replaceAll('{verification}', VERIFICATION_CHANNEL_MENTION)
+    .replaceAll('{role}', ROLE_CHANNEL_MENTION)
+    .replaceAll('{roleInfo}', ROLE_INFO_CHANNEL_MENTION);
+}
 
 const client = new Client({
   intents: [
@@ -34,6 +59,36 @@ const client = new Client({
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`✅ Bot ready! Logged in as ${readyClient.user.tag}`);
+});
+
+client.on(Events.GuildMemberAdd, async (member) => {
+  try {
+    const channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
+
+    if (!channel || !channel.isTextBased()) {
+      console.warn('[WELCOME_MEMBER_SKIP]', {
+        guildId: member.guild.id,
+        channelId: WELCOME_CHANNEL_ID,
+        memberId: member.id,
+        reason: 'Welcome channel not found or not text-based'
+      });
+      return;
+    }
+
+    await channel.send(buildWelcomeMessage(member.id));
+    console.log('[WELCOME_MEMBER_SEND]', {
+      guildId: member.guild.id,
+      channelId: WELCOME_CHANNEL_ID,
+      memberId: member.id
+    });
+  } catch (error) {
+    console.error('[WELCOME_MEMBER_ERROR]', {
+      guildId: member.guild.id,
+      channelId: WELCOME_CHANNEL_ID,
+      memberId: member.id,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -78,6 +133,39 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (message.author.bot || !message.guild) return;
 
+  const prefixMatch = parseSearchPrefix(message.content);
+  if (prefixMatch && !prefixMatch.empty) {
+    try {
+      await message.channel.sendTyping();
+
+      const query = prefixMatch.query;
+      const searchData = await searchWeb(query, { maxResults: 5 });
+      const linksBlock = formatSearchResultLinks(searchData.results, 5);
+
+      const summaryPrompt = buildSearchSummaryPrompt(query, searchData.results, searchData.answer);
+      const channel = { id: message.channel.id, name: message.channel.name };
+      const summary = await generateAiResponse(summaryPrompt, message.author, channel, '', '');
+
+      const replyText = buildSearchReply(query, linksBlock, summary, searchData.provider);
+      await message.reply(replyText);
+    } catch (error) {
+      console.error('[SEARCH_ERROR]', {
+        guildId: message.guild?.id,
+        channelId: message.channel?.id,
+        userId: message.author?.id,
+        query: prefixMatch?.query,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply('Duh, pencariannya lagi error nih pasupan 😅 Coba bentar lagi ya ❤️');
+    }
+    return;
+  }
+
+  if (prefixMatch && prefixMatch.empty) {
+    await message.reply('Cara pakai: `!search <apa yang mau dicari>` pasupan ❤️');
+    return;
+  }
+
   const botId = client.user?.id;
   const isMentioned = botId ? message.mentions.users.has(botId) : false;
   const isAllowedChannel = ALLOWED_CHANNEL_IDS.has(message.channel?.id);
@@ -117,7 +205,8 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     const response = await generateAiResponse(routedPrompt, message.author, channel, recentMessages, context);
-    await message.reply(response);
+    const truncated = response.length > 2000 ? response.slice(0, 1997) + '...' : response;
+    await message.reply(truncated);
   } catch (error) {
     console.error('Mention AI Error:', error);
     await message.reply('DUH ... aku udah ga mood nanti lah jawabnya 😠');
@@ -256,11 +345,18 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
       createdTimestamp: latestMessage.createdTimestamp
     });
 
+    const nearestEvent = findNearestEvent(latestMessage.content);
+
     return [
       `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>`,
       `[Latest Event Update Message Timestamp]: ${new Date(latestMessage.createdTimestamp).toISOString()}`,
       `[Latest Event Update Content]: ${latestMessage.content}`,
-      `[Latest Parsed Event Date]: ${parseEventDate(latestMessage.content)}`
+      `[Latest Parsed Event Date]: ${parseEventDate(latestMessage.content)}`,
+      nearestEvent ? `[Nearest Event]: ${nearestEvent.raw}` : '[Nearest Event]: NOT_FOUND',
+      nearestEvent ? `[Nearest Event Date]: ${nearestEvent.dateLabel}` : '[Nearest Event Date]: -',
+      nearestEvent ? `[Nearest Event Venue]: ${nearestEvent.venue}` : '[Nearest Event Venue]: -',
+      nearestEvent ? `[Nearest Event Time]: ${nearestEvent.time}` : '[Nearest Event Time]: -',
+      nearestEvent ? `[Days Until Nearest Event]: ${nearestEvent.daysUntil}` : '[Days Until Nearest Event]: -'
     ].join('\n');
   } catch (error) {
     console.warn('[EVENT_LOOKUP_ERROR]', {
@@ -273,6 +369,9 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
 }
 
 function parseEventDate(content) {
+  const nearestEvent = findNearestEvent(content);
+  if (nearestEvent) return nearestEvent.dateLabel;
+
   const patterns = [
     /\b(\d{2}\/\d{2}\/\d{4})\b/,
     /\b(\d{2}-\d{2}-\d{4})\b/,
@@ -287,6 +386,112 @@ function parseEventDate(content) {
   }
 
   return '-';
+}
+
+function findNearestEvent(content) {
+  const events = parseScheduleEvents(content);
+  if (!events.length) return null;
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  const upcoming = events
+    .filter(event => event.date.getTime() >= todayStart)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  if (!upcoming.length) return null;
+
+  const nearest = upcoming[0];
+  const diffMs = nearest.date.getTime() - todayStart;
+  const daysUntil = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+
+  return {
+    raw: nearest.raw,
+    dateLabel: nearest.dateLabel,
+    venue: nearest.venue,
+    time: nearest.time,
+    daysUntil
+  };
+}
+
+function parseScheduleEvents(content) {
+  const events = [];
+  const lines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+
+    const compactMatch = line.match(/^(?<dateLabel>[^—]+?)\s+—\s+(?<venue>[^—]+?)\s+—\s+(?<time>.+)$/);
+    if (compactMatch?.groups) {
+      const date = parseIndonesianDateLabel(compactMatch.groups.dateLabel);
+      if (date) {
+        events.push({
+          raw: line,
+          dateLabel: compactMatch.groups.dateLabel.trim(),
+          venue: compactMatch.groups.venue.trim(),
+          time: compactMatch.groups.time.trim(),
+          date
+        });
+      }
+      continue;
+    }
+
+    if (!line.startsWith('📅')) continue;
+
+    const dateLabel = line.replace(/^📅\s*/, '').trim();
+    const date = parseIndonesianDateLabel(dateLabel);
+    if (!date) continue;
+
+    const venueLine = lines[i + 1] || '';
+    const timeLine = lines[i + 2] || '';
+    const venue = venueLine.startsWith('📍') ? venueLine.replace(/^📍\s*/, '').trim() : '-';
+    const time = timeLine.startsWith('⏰') ? timeLine.replace(/^⏰\s*/, '').trim() : '-';
+
+    events.push({
+      raw: `${dateLabel} — ${venue} — ${time}`,
+      dateLabel,
+      venue,
+      time,
+      date
+    });
+  }
+
+  return events;
+}
+
+function parseIndonesianDateLabel(label) {
+  const normalized = label
+    .toLowerCase()
+    .replace(/jum['’]?at/g, 'jumat')
+    .replace(/[^a-z0-9\s,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const monthMap = {
+    januari: 0,
+    februari: 1,
+    maret: 2,
+    april: 3,
+    mei: 4,
+    juni: 5,
+    juli: 6,
+    agustus: 7,
+    september: 8,
+    oktober: 9,
+    november: 10,
+    desember: 11
+  };
+
+  const match = normalized.match(/(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu)?\s*,?\s*(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const monthName = match[2];
+  const year = Number(match[3]);
+  const month = monthMap[monthName];
+
+  if (month === undefined) return null;
+  return new Date(year, month, day);
 }
 
 client.on('error', (error) => {
