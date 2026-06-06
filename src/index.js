@@ -456,9 +456,18 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
       }))
     });
 
-    const nearestEvent = findNearestEvent(latestMessage.content);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const tomorrowStart = todayStart + 24 * 60 * 60 * 1000;
 
-    return [
+    const upcomingEvents = allEvents
+      .filter(event => event.date.getTime() >= tomorrowStart)
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .slice(0, 5);
+
+    const nearestEvent = findNearestEvent(latestMessage.content, { skipToday: true });
+
+    const lines = [
       `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>`,
       `[Latest Event Update Message Timestamp]: ${new Date(latestMessage.createdTimestamp).toISOString()}`,
       `[Latest Event Update Content]: ${latestMessage.content}`,
@@ -468,7 +477,16 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
       nearestEvent ? `[Nearest Event Venue]: ${nearestEvent.venue}` : '[Nearest Event Venue]: -',
       nearestEvent ? `[Nearest Event Time]: ${nearestEvent.time}` : '[Nearest Event Time]: -',
       nearestEvent ? `[Days Until Nearest Event]: ${nearestEvent.daysUntil}` : '[Days Until Nearest Event]: -'
-    ].join('\n');
+    ];
+
+    if (upcomingEvents.length) {
+      const listText = upcomingEvents
+        .map((e, i) => `${i + 1}. ${e.dateLabel} — ${e.venue} — ${e.time}`)
+        .join('\n');
+      lines.push(`[Upcoming Events]:\n${listText}`);
+    }
+
+    return lines.join('\n');
   } catch (error) {
     console.warn('[EVENT_LOOKUP_ERROR]', {
       requestUserId,
@@ -499,15 +517,16 @@ function parseEventDate(content) {
   return '-';
 }
 
-function findNearestEvent(content) {
+function findNearestEvent(content, { skipToday = false } = {}) {
   const events = parseScheduleEvents(content);
   if (!events.length) return null;
 
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const cutoff = skipToday ? todayStart + 24 * 60 * 60 * 1000 : todayStart;
 
   const upcoming = events
-    .filter(event => event.date.getTime() >= todayStart)
+    .filter(event => event.date.getTime() >= cutoff)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 
   if (!upcoming.length) return null;
