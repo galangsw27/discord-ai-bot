@@ -12,7 +12,7 @@ const ALLOWED_CHANNEL_IDS = new Set([
   '1500092065730531392',
   '1460230180114141271'
 ]);
-const SLEEPMODE = false;
+const SLEEPMODE = true;
 const commands = await loadCommands();
 const EVENT_SOURCE_CHANNEL_ID = '1460235193062395966';
 const EVENT_SCHEDULE_MARKER = 'INFO JADWAL EVENT TERUPDATE';
@@ -288,7 +288,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!isAllowedChannel) {
     try {
-      await message.reply(`Maaf pasupan <@${message.author.id}> ❤️ aku cuma aktif di <#1500092065730531392>  ya.`);
+      await message.reply(`Maaf pasupan <@${message.author.id}> ❤️ aku udah mau ga aktif   ya.`);
     } catch (error) {
       console.error('Channel restriction reply error:', error);
     }
@@ -297,7 +297,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   const settings = await getGuildSettings(message.guild.id);
   if (SLEEPMODE) {
-    await message.reply('Sorry Mili lagi liburan ke garut!');
+    await message.reply('Sorry Mili sudah ikut bapak , jadi mili mau pensi juga');
     return;
   }
   if (settings.aiEnabled === false) return;
