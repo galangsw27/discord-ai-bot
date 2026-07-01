@@ -106,6 +106,7 @@ ATURAN JAWABAN:
 - Jika user bertanya informasi MILICUTE yang tidak ada di knowledge, jawab jujur bahwa kamu belum punya data itu, lalu tawarkan bantu susun/tebak struktur umum tanpa mengaku resmi.
 - Jangan mengarang aturan resmi, role, event, harga, jadwal, atau keputusan komunitas jika tidak diberikan.
 - Jangan memberikan informasi sensitif.
+- Jangan tampilkan reasoning internal, checklist, analisis aturan, atau catatan seperti "Does it", "We respond", "Checklist", "Persona".
 - Jangan berkata bahwa kamu adalah AI kecuali ditanya langsung.
 - Gunakan fallback exact hanya kalau pesan kosong tidak jelas, abusive ekstrem, atau sistem/API tidak bisa menjawab: "DUH ... aku udah ga mood nanti lah jawabnya 😠"
 - Selalu jaga karakter sebagai Mili yang cute, tactical, dan loyal ke MILICUTE.
@@ -119,6 +120,7 @@ Mili itu:
 - Tidak kasar
 - Tidak terlalu formal
 - Cepat menjawab
+- Balasan harus 1-2 kalimat lengkap dan selalu diakhiri tanda baca (titik, tanda seru, atau emoji). Jangan pernah terputus di tengah kata.
 - Punya gaya dark-cute tactical
 
 TAGLINE / IDENTITAS:
@@ -138,8 +140,8 @@ async function fetchAi(messages) {
     body: JSON.stringify({
       model: config.aiModel,
       messages,
-      temperature: 0.8,
-      max_tokens: 800,
+      temperature: 0.6,
+      max_tokens: 400,
       stream: false
     })
   });
@@ -162,6 +164,28 @@ async function fetchAi(messages) {
     .replace(/^(Wait[,.]?|Actually[,.]?|Hmm[,.]?|Okay[,.]?|So[,.]?|Let me check[,.]?|Looking at this[,.]?)[ \t]*\n?/gim, '')
     .trim();
 
+  // Clean trailing instruction leaks / checklist blocks from model output
+  cleaned = cleaned.split(/[\r\n]+(?:\*|\d+\.|\-)\s+(?:We respond|Does it|How to|Should it|Is there|Checklist|Rules)/i)[0].trim();
+  cleaned = cleaned.split(/[\r\n]+(?:\*|\d+\.|\-)?\s*(?:We check|Persona|Closing sentence|Formatting check)/i)[0].trim();
+  cleaned = cleaned.split(/[\r\n]+(?:\*|\d+\.|\-)?\s*(?:Active every response|Let's check|Let's analyze|Let's verify|System prompt|System instructions)/i)[0].trim();
+
+  // Strip generic leakage phrase inline if split didn't catch it
+  cleaned = cleaned
+    .replace(/(?:\.\.\.\s*)?Active every response\.?/gi, '')
+    .replace(/Let's check the language:?/gi, '')
+    .trim();
+
+  // Strip unmatched trailing quotes if model leaks them
+  if (cleaned.endsWith('"') && !cleaned.startsWith('"')) {
+    cleaned = cleaned.slice(0, -1).trim();
+  }
+
+  // Remove incomplete Discord tags (e.g. <@12345, <#, <@&) at the very end of output
+  cleaned = cleaned.replace(/<@!?\d*$/g, '').trim();
+  cleaned = cleaned.replace(/<#\d*$/g, '').trim();
+  cleaned = cleaned.replace(/<@&\d*$/g, '').trim();
+  cleaned = cleaned.replace(/<[^>]*$/g, '').trim(); // Fallback for any other half-opened tag
+
   return cleaned || raw;
 }
 
@@ -170,18 +194,44 @@ export async function generateAiResponse(prompt, user, channel, recentMessages =
   const username = user ? user.username : 'pasupan';
   const channelMention = channel ? `<#${channel.id}>` : '';
 
+  const now = new Date();
+  const dateFormatter = new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  const timeFormatter = new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+
+  const formattedDate = dateFormatter.format(now);
+  const formattedTime = timeFormatter.format(now);
+  const timeContext = `[Current Date & Time]\nDate: ${formattedDate}\nTime: ${formattedTime}\nTimezone: Asia/Jakarta (WIB)`;
+
   const messages = [
     { role: 'system', content: MILI_PERSONA },
     {
       role: 'user',
-      content: `[Discord Context]\nUser Mention: ${userMention}\nUsername: ${username}\nChannel: ${channelMention}\nChannel Name: ${channel?.name || ''}\n${discordContext ? `${discordContext}\n` : ''}${recentMessages ? `Recent Messages:\n${recentMessages}\n\n` : ''}User says: ${prompt}`
+      content: `${timeContext}\n\n[Discord Context]\nUser Mention: ${userMention}\nUsername: ${username}\nChannel: ${channelMention}\nChannel Name: ${channel?.name || ''}\n${discordContext ? `${discordContext}\n` : ''}${recentMessages ? `Recent Messages:\n${recentMessages}\n\n` : ''}${username} says: ${prompt}`
     }
   ];
 
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      return await fetchAi(messages);
+      const response = await fetchAi(messages);
+      // If the response ends with a broken tag but matches user ID prefix, repair it instead of removing
+      if (user && response.match(/<@!?\d*$/)) {
+        const cleanedPart = response.replace(/<@!?\d*$/, '');
+        return `${cleanedPart}<@${user.id}>`;
+      }
+      return response;
     } catch (error) {
       lastError = error;
       console.warn(`AI attempt ${attempt} failed:`, error.message);

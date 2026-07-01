@@ -12,6 +12,7 @@ const ALLOWED_CHANNEL_IDS = new Set([
   '1500092065730531392',
   '1460230180114141271'
 ]);
+const SLEEPMODE = false;
 const commands = await loadCommands();
 const EVENT_SOURCE_CHANNEL_ID = '1460235193062395966';
 const EVENT_SCHEDULE_MARKER = 'INFO JADWAL EVENT TERUPDATE';
@@ -21,7 +22,16 @@ const EVENT_KEYWORDS = [
   'event hari ini',
   'acara hari ini',
   'kapan event',
-  'info event'
+  'info event',
+  'ada event lagi',
+  'setelah itu',
+  'setelah tgl',
+  'setelah ini',
+  'sebelum tanggal',
+  'sebelum tgl',
+  'sebelum event',
+  'sebelum ini',
+  'nanti berarti'
 ];
 const WELCOME_CHANNEL_ID = '1459954382257918199';
 const VERIFICATION_CHANNEL_ID = '1467894995355963562';
@@ -286,6 +296,10 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   const settings = await getGuildSettings(message.guild.id);
+  if (SLEEPMODE) {
+    await message.reply('Sorry Mili lagi liburan ke garut!');
+    return;
+  }
   if (settings.aiEnabled === false) return;
 
   const originalContent = message.content.trim();
@@ -293,6 +307,12 @@ client.on(Events.MessageCreate, async (message) => {
   const routedPrompt = rawPrompt || 'sapa aku sebagai Mili dengan gaya khas MILICUTE.';
 
   await message.channel.sendTyping();
+
+  const directEventReply = await buildEventScheduleReply(message.guild, routedPrompt, message.author.id);
+  if (directEventReply) {
+    await message.reply(directEventReply);
+    return;
+  }
 
   const recentMessages = await getRecentMessages(message.channel, message.id, 8);
   const channel = { id: message.channel.id, name: message.channel.name };
@@ -476,7 +496,9 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
       nearestEvent ? `[Nearest Event Date]: ${nearestEvent.dateLabel}` : '[Nearest Event Date]: -',
       nearestEvent ? `[Nearest Event Venue]: ${nearestEvent.venue}` : '[Nearest Event Venue]: -',
       nearestEvent ? `[Nearest Event Time]: ${nearestEvent.time}` : '[Nearest Event Time]: -',
-      nearestEvent ? `[Days Until Nearest Event]: ${nearestEvent.daysUntil}` : '[Days Until Nearest Event]: -'
+      nearestEvent ? `[Days Until Nearest Event]: ${nearestEvent.daysUntil}` : '[Days Until Nearest Event]: -',
+      `[Event Reply Format Rule]: Jika user bertanya jadwal event, jawab memakai format sumber news server. Jangan diringkas jadi satu kalimat jika ada data event terstruktur. Gunakan emoji 📅, 📍, dan 🕘 seperti format sumber.`,
+      latestMessage.content ? `[Original Event Schedule Format]:\n${latestMessage.content}` : '[Original Event Schedule Format]: -'
     ];
 
     if (upcomingEvents.length) {
@@ -495,6 +517,78 @@ async function getEventScheduleContext(guild, prompt, requestUserId) {
     });
     return `[Event Schedule Source Channel]: <#${EVENT_SOURCE_CHANNEL_ID}>\n[Latest Event Update]: LOOKUP_ERROR`;
   }
+}
+
+async function buildEventScheduleReply(guild, prompt, requestUserId) {
+  if (!shouldLookupEventSchedule(prompt)) return '';
+
+  const sourceChannel = guild.channels.cache.get(EVENT_SOURCE_CHANNEL_ID);
+  if (!sourceChannel?.isTextBased()) {
+    console.warn('[EVENT_DIRECT_REPLY_ERROR]', {
+      requestUserId,
+      sourceChannelId: EVENT_SOURCE_CHANNEL_ID,
+      error: 'Source channel not found or not text-based'
+    });
+    return `Maaf <@${requestUserId}>, jadwal event belum bisa aku cek sekarang 😿`;
+  }
+
+  const fetched = await sourceChannel.messages.fetch({ limit: 100 });
+  const matchedMessages = [...fetched.values()]
+    .filter(message => message.content.toLowerCase().includes(EVENT_SCHEDULE_MARKER.toLowerCase()))
+    .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+  const latestMessage = matchedMessages[0];
+
+  if (!latestMessage) return `Maaf <@${requestUserId}>, jadwal event belum ketemu di <#${EVENT_SOURCE_CHANNEL_ID}> 😿`;
+
+  const events = parseScheduleEvents(latestMessage.content);
+  if (!events.length) return `Maaf <@${requestUserId}>, format jadwal event belum kebaca 😿`;
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const normalizedPrompt = prompt.toLowerCase();
+  const asksToday = normalizedPrompt.includes('hari ini');
+  const asksBefore = normalizedPrompt.includes('sebelum');
+  const asksAfter = normalizedPrompt.includes('setelah');
+  const referencedDate = parsePromptDateReference(normalizedPrompt, now);
+  const referencedDateTime = referencedDate ? referencedDate.getTime() : ((asksAfter || asksBefore) ? todayStart : null);
+
+  const selectedEvents = events
+    .filter(event => {
+      const eventTime = event.date.getTime();
+      if (asksBefore && referencedDateTime !== null) return eventTime < referencedDateTime;
+      if (asksAfter && referencedDateTime !== null) return eventTime > referencedDateTime;
+      if (asksToday) return eventTime === todayStart;
+      return eventTime >= todayStart;
+    })
+    .sort((a, b) => asksBefore
+      ? b.date.getTime() - a.date.getTime()
+      : a.date.getTime() - b.date.getTime());
+
+  if (!selectedEvents.length) {
+    if (asksBefore && referencedDateTime !== null) return `<@${requestUserId}> Sebelum ${formatDateReference(new Date(referencedDateTime))} belum ada jadwal event yang kebaca di <#${EVENT_SOURCE_CHANNEL_ID}> ❤️`;
+    if (asksAfter && referencedDateTime !== null) return `<@${requestUserId}> Setelah ${formatDateReference(new Date(referencedDateTime))} belum ada jadwal event yang kebaca di <#${EVENT_SOURCE_CHANNEL_ID}> ❤️`;
+    return asksToday
+      ? `<@${requestUserId}> Hari ini belum ada jadwal event yang kebaca di <#${EVENT_SOURCE_CHANNEL_ID}> ❤️`
+      : `<@${requestUserId}> Belum ada jadwal event berikutnya yang kebaca di <#${EVENT_SOURCE_CHANNEL_ID}> ❤️`;
+  }
+
+  const title = asksBefore && referencedDateTime !== null
+    ? `Jadwal sebelum ${formatDateReference(new Date(referencedDateTime))}:`
+    : asksAfter && referencedDateTime !== null
+      ? `Jadwal setelah ${formatDateReference(new Date(referencedDateTime))}:`
+      : asksToday
+        ? 'Hari ini ada event:'
+        : 'Jadwal event terdekat:';
+
+  // Always show only the nearest matching date, but include all events on that same date.
+  const targetDate = selectedEvents[0].date.getTime();
+  const finalEvents = selectedEvents.filter(e => e.date.getTime() === targetDate);
+
+  const eventText = finalEvents
+    .map(event => `📅 ${event.dateLabel}\n📍 ${event.venue}\n⏰ ${event.time}`)
+    .join('\n\n');
+
+  return `<@${requestUserId}> ${title}\n\n${eventText}`;
 }
 
 function parseEventDate(content) {
@@ -587,6 +681,43 @@ function parseScheduleEvents(content) {
   }
 
   return events;
+}
+
+function parsePromptDateReference(prompt, baseDate = new Date()) {
+  const monthMap = {
+    januari: 0,
+    februari: 1,
+    maret: 2,
+    april: 3,
+    mei: 4,
+    juni: 5,
+    juli: 6,
+    agustus: 7,
+    september: 8,
+    oktober: 9,
+    november: 10,
+    desember: 11
+  };
+
+  const match = prompt.match(/(?:tanggal|tgl)?\s*(\d{1,2})\s*([a-z]+)?\s*(\d{4})?/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const monthName = match[2];
+  const year = match[3] ? Number(match[3]) : baseDate.getFullYear();
+  const month = monthName ? monthMap[monthName] : baseDate.getMonth();
+
+  if (!day || month === undefined) return null;
+  return new Date(year, month, day);
+}
+
+function formatDateReference(date) {
+  return new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  }).format(date);
 }
 
 function parseIndonesianDateLabel(label) {
